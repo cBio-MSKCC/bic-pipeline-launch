@@ -35,6 +35,8 @@ fi
 an_dir=$(echo $an_dir | sed 's/\/$//')
 mkdir -p ${an_dir}/scratch/${user}
 export TMPDIR=${an_dir}/scratch
+# This will ensure that conda doesn't use local python libraries
+export PYTHONNOUSERSITE=True
 
 CONFIG=${an_dir}/config_${samp_name}.yaml
 TARGET=out/experiment/novel_analysis/proteome_blast.outfmt6

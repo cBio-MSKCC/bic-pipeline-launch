@@ -144,7 +144,10 @@ def merged_counts_checks(samples, odir, merged_counts_file, expected_genome):
             row = next(reader)
             gene_name = row['GeneSymbol']
             if genome_gene_isupper[expected_genome] != gene_name.isupper():
-                logging.error(f"Gene name {gene_name} is not all caps as expected for {expected_genome}.")
+                # ignore gene h19, because it doesn't abide by rule of capitalization
+                if gene_name.upper() == "H19":
+                    continue    
+                logging.error(f"Gene name {gene_name} is not the expected capitalization for {expected_genome}.")
                 gene_error = True
 
     samples_not_in_header = [ sample for sample in samples if sample not in reader.fieldnames ]

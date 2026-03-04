@@ -1,7 +1,9 @@
 #!/bin/bash
 
 slurm_partition="cmobic_cpu,cmobic_pipeline"
-bic_scdownstream="/data1/core001/work/bic/kazmierk/git/bic-scdownstream"
+bic_spatialvi="/data1/core001/work/bic/kazmierk/git/bic-spatialvi"
+profile="singularity"
+email="kazmierk@mskcc.org"
 an_dir=$(pwd | sed 's/\/$//')
 
 
@@ -15,22 +17,22 @@ export NXF_SINGULARITY_CACHEDIR=/usersoftware/core001/common/bic/internal/.singu
 . /usr/share/lmod/lmod/init/bash
 module load openjdk/17.0.11_9
 
-dir_name=$(basename $an_dir)
-
 nextflow=/data1/core001/work/bic/kazmierk/nextflow/25.10.0/nextflow
 
-job_to_run="sbatch -J \"scdownstream_${dir_name}\" -p ${slurm_partition} -n 4 --time=6-00:00:00 --mem 8G --chdir=${an_dir} -o ${an_dir}/scdownstream.log -e ${an_dir}/scdownstream.err \
---wrap=\"$nextflow run $bic_scdownstream \
--resume \
--ansi-log false \
--profile singularity \
--c $bic_scdownstream/conf/bic/iris.config \
---outdir ${an_dir}/downstream_out \
---ambient_correction cellbender \
---duplicate_var_resolution make_unique \
---input downstream_input.csv \
---celldex_reference ${an_dir}/celldex_refernces.csv\""
 
+dir_name=$(basename $an_dir)
+
+job_to_run="sbatch -J \"spatialvi_${dir_name}\" -p ${slurm_partition} -n 4 --time=6-00:00:00 --nodes=1 --mem 8G --chdir=${an_dir} -o ${an_dir}/spatialvi.log -e ${an_dir}/spatialvi.err \
+--wrap=\"$nextflow run $bic_spatialvi \
+    -profile $profile \
+    -resume \
+    -ansi-log false \
+    -c $bic_spatialvi/conf/bic/iris.config \
+    -w ${an_dir}/work \
+    --email $email \
+    --input ${an_dir}/sample_sheet.csv \
+    --merge_sdata true \
+    --outdir ${an_dir}/out\""
 
 echo "$job_to_run \n\n"
 
@@ -41,3 +43,4 @@ if [ $? -ne 0 ]; then
     echo "output: $jobstring"
     exit 1
 fi
+

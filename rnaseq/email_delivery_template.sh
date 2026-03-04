@@ -10,12 +10,13 @@ if [ $# -ne 4 ]; then
     exit 1
 fi
 
-PID=$1
+PROJ_ID=$1
 RUN_NUM=$2
 INV_NAME=$3
 EMAILS_TO_SEND=$4
 
-INV_FIRST_NAME=${INV_NAME#*, }
+INV_FIRST_NAME=${INV_NAME#*,}
+PID=$(echo ${PROJ_ID} | sed 's/^Proj_//')
 
 # Load configuration from external config file
 script_dir=$(dirname "$(realpath "$0")")
@@ -56,4 +57,4 @@ echo "Subject: $SUBJECT"
 echo "Content-Type: text/html"
 echo ""
 echo "$HTML_BODY"
-) | sendmail -t
+) | /usr/sbin/sendmail -t

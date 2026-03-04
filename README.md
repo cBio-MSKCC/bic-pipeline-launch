@@ -10,6 +10,9 @@ Musvar is the mouse variants pipeline. It utilizes nf-sarek as well as a number 
 ### RNASeq
 RNASeq analysis pipeline consists of nf-rnaseq and nf-diffabundance Nextflow workflows as well as a number of additional modules. It runs on terra, running at iris is still in testing. Read `rnaseq/README.md` for more information about running this pipeline.
 
+### pg2
+This contains the command to run 1 run of PG2. Probably some tweaks needs to be made. For example, 
+
 ## Automation
 
 There is some automation scripts in `auto_start` which will automatically start the rnaseq pipeline on terra. Read `auto_start/README.md` for more information about it. 

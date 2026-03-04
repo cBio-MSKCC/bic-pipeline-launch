@@ -98,6 +98,7 @@ inv_name=$(grep ^Investigator_Name: $out_dir/project_files/*request.txt | cut -f
 proj_id=$(grep ^ProjectID: $out_dir/project_files/*request.txt | cut -f2 -d":" | tr -d " ")
 run_num="r_$(grep ^RunNumber $out_dir/project_files/*request.txt | cut -f2 -d":" | tr -d " " | xargs printf "%03d" )"
 build=$(grep ^Build: $out_dir/project_files/*request.txt | cut -f2 -d":" | tr -d " ")
+pipelines=$(grep ^Pipelines: $out_dir/project_files/*request.txt | cut -f2 -d":" | tr -d " ")
 if [ -z "$pi" ] || [ -z "$inv" ]; then
     printf "No PI or Investigator found in request file, not delivering project!\n"
     exit 1
@@ -169,7 +170,7 @@ if [ ! -z "$diff_ver" ]; then
 fi
 if [ ! -z "$comments" ]; then
     echo -e "Comments for ticket:\n$comments"
-    close_pipeline_cmd="$close_pipeline_cmd --comments \"$comments\""
+    close_pipeline_cmd="$close_pipeline_cmd --comments $comments"
 fi
 
 if [ ! -z "$ticket_id" ]; then
@@ -183,6 +184,11 @@ fi
 if [ $cluster == "iris" ]; then
     echo "Removing fastq files from CACHE directory"
     rm -r /data1/core001/CACHE/igo/${proj_id}
+fi
+
+if [ ! -z "$pipelines" ] && [ "$pipelines" == "*Fusion-Forte*" ]; then
+    echo "Fusion-Forte pipeline found, skipping delivery email"
+    exit 0
 fi
 
 #

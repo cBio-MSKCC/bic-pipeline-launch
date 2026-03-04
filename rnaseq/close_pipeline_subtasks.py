@@ -17,9 +17,10 @@ def get_args():
     parser.add_argument('--rsync_dir', required=True, help='Directory to rsync summary files to')
     parser.add_argument('--del_path', required=True, help='Path to final results directory')
     parser.add_argument('--diff_ver', help='Diff pipeline version')
-    parser.add_argument('--comments', help='Comments for the ClickUp ticket')
     parser.add_argument('--log_level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help='Logging level')
     parser.add_argument('--dry_run', action='store_true', help='Perform a dry run without making changes')
+    parser.add_argument('--comments', type=str, nargs='*',help='Comments for the ClickUp ticket')
+
     return parser.parse_args()
 
 def update_custom_fields(task_id, fields, task_fields, dry_run):
@@ -43,7 +44,7 @@ if __name__ == "__main__":
     # but if comments need to be added, close without updating or closing anything
     if args.comments:
         if not args.dry_run:
-            Clickup.create_task_comment(args.ticket_id, args.comments)
+            Clickup.create_task_comment(args.ticket_id, " ".join(args.comments))
         logger.info(f"Added comment to task {args.ticket_id} - exiting without updating fields or closing tasks")
         sys.exit(0)
     

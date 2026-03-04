@@ -65,9 +65,10 @@ for dir in $orig_dir; do
 	# This means we can't use the rsync for external projects.
     long_proj=$(basename $(dirname $dir))
     run_path=$(basename $(dirname $(dirname $dir)))
+    umask 002
     mkdir -p $path_to_rsync/$project/$run_path/$long_proj
     echo "Rsyncing $iris_dir"
-    rsync -avzP --chown=${rsync_user}:${rsync_group} $iris_dir $path_to_rsync/$project/$run_path/$long_proj
+    rsync -avz --chown=${rsync_user}:${rsync_group} --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r $iris_dir $path_to_rsync/$project/$run_path/$long_proj
 done
 
 # make a new mapping file

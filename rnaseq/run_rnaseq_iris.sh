@@ -137,7 +137,6 @@ fi
 
 # if rnaseq_only is false, run DIFF
 if [ $rsync_only == false ]; then
-    cnum=0
 
     gsea=""
     if [ -f $an_dir/gsea_gene_sets.txt ];then
@@ -152,23 +151,23 @@ if [ $rsync_only == false ]; then
         
         cword=$(basename $cfile .csv)
 
-        job_to_run="sbatch -J \"diff_${dir_name}_${cnum}\" -p ${slurm_partition} -n 4 --time=6-00:00:00 --mem 8G --chdir=${an_dir} $de_job_hold -o ${an_dir}/diff.log -e ${an_dir}/diff.err \
-    --wrap=\"nextflow run $bic_diff \
-    -profile $profile \
-    -resume \
-    -ansi-log false \
-    -c $bic_diff/conf/bic.config \
-    -c $bic_diff/conf/iris.config \
-    -params-file $bic_diff/params/params.bic.yml \
-    -w ${an_dir}/work \
-    --email_on_fail $email \
-    --input ${an_dir}/input.csv \
-    --matrix ${an_dir}/r_${run_number}/star_htseq/htseq/htseq.merged.counts.tsv \
-    --contrasts ${cfile} \
-    --study_name ${cword} \
-    --genome ${genome} \
-    ${gsea} \
-    --outdir ${an_dir}/r_${run_number}/star_htseq/differentialExpression_gene\""
+        job_to_run="sbatch -J \"diff_${dir_name}_${cword}\" -p ${slurm_partition} -n 4 --time=6-00:00:00 --mem 8G --chdir=${an_dir} $de_job_hold -o ${an_dir}/diff.log -e ${an_dir}/diff.err \
+        --wrap=\"nextflow run $bic_diff \
+        -profile $profile \
+        -resume \
+        -ansi-log false \
+        -c $bic_diff/conf/bic.config \
+        -c $bic_diff/conf/iris.config \
+        -params-file $bic_diff/params/params.bic.yml \
+        -w ${an_dir}/work \
+        --email_on_fail $email \
+        --input ${an_dir}/input.csv \
+        --matrix ${an_dir}/r_${run_number}/star_htseq/htseq/htseq.merged.counts.tsv \
+        --contrasts ${cfile} \
+        --study_name ${cword} \
+        --genome ${genome} \
+        ${gsea} \
+        --outdir ${an_dir}/r_${run_number}/star_htseq/differentialExpression_gene\""
 
         echo "$job_to_run\n\n"
         jobstring=$(eval $job_to_run)
@@ -179,15 +178,8 @@ if [ $rsync_only == false ]; then
         fi
         jobid=${jobstring##* }
 
-        # change job hold to the previous diff job
-        if [ $cnum -gt 0 ]; then
-            de_job_hold="--dependency=afterok:$jobid"
-        fi
-
-        cnum=$((cnum+1))
-        if [ -f $cfile ]; then
-            rsync_job_hold="--dependency=afterok:$jobid"
-        fi
+        de_job_hold="--dependency=afterok:$jobid"
+        rsync_job_hold="--dependency=afterok:$jobid"
 
     done
 fi

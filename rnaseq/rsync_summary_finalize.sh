@@ -8,8 +8,8 @@ set -e
 
 script_dir=$(dirname "$(realpath "$0")")
 
-# if there is not 4 arguments, print usage and exit
-if [ $# -ne 7 ]; then
+# if there is not 7 or more arguments, print usage and exit
+if [ $# -lt 7 ]; then
     echo "Usage: rsync_summary_finalize.sh <rundir> <outdir> <rsync_dir> <panda_simg> <pfg_simg> <delivery_dir> <cluster>"
     echo "run_dir: directory where the pipeline was run (should have project files)"
     echo "out_dir: outdir provided to the pipeline"
@@ -22,6 +22,7 @@ if [ $# -ne 7 ]; then
 fi
 
 # grab rundir output, rsync dirs from command line
+custom=false
 run_dir=$1
 out_dir=$2
 rsync_dir=$3
@@ -30,10 +31,19 @@ pfg_simg=$5
 delivery_dir=$6
 cluster=$7
 
+shift 7
+# if the extra argument == "custom" this is a custom analysis - don't fail on summary/postpipeline checks
+if [ "$1" == "custom" ]; then
+    custom=true
+    shift 1
+fi
+
 # if outdir is not a full path, add it to run_dir.
 if [[ $out_dir != /* ]]; then
     out_dir=$run_dir/$out_dir
 fi
+
+delivery_queue="/data1/core001/work/bic/bot01/queues/isvzeta_queue.txt"
 
 #
 # softlink gsea report index.html to outdir
@@ -73,7 +83,9 @@ fi
 #
 # Run bicdelivery_summary script
 #
-singularity exec -B ${script_dir} -B ${run_dir} $panda_simg python ${script_dir}/bicdelivery_summary.py $out_dir
+if [ $custom == false ]; then
+    singularity exec -B ${script_dir} -B ${run_dir} $panda_simg python ${script_dir}/bicdelivery_summary.py $out_dir
+fi
 
 #
 # Rsync the results to the rsync directory
@@ -85,9 +97,11 @@ rsync -avzP --exclude-from=${script_dir}/rsync_excludes.txt $run_dir $rsync_dir
 #
 # final checks - store stderr in variable
 #
-echo "Running post-pipeline checks..."
-echo "python3 ${script_dir}/postpipeline_checks.py $run_dir 2>&1"
-this_stderr=$(python3 ${script_dir}/postpipeline_checks.py $run_dir 2>&1)
+if [ $custom == false ]; then
+    echo "Running post-pipeline checks..."
+    echo "python3 ${script_dir}/postpipeline_checks.py $run_dir 2>&1"
+    this_stderr=$(python3 ${script_dir}/postpipeline_checks.py $run_dir 2>&1)
+fi
 
 #
 # rsync to delivery directory
@@ -103,24 +117,38 @@ if [ -z "$pi" ] || [ -z "$inv" ]; then
     printf "No PI or Investigator found in request file, not delivering project!\n"
     exit 1
 fi
-del_path=${delivery_dir}/${pi}/${inv}/${proj_id}/
 
-delivery_user="none"
-delivery_host="none"
-# if delivery_dir contains an @ in it, don't mkdir -p, just rsync
-if [[ $delivery_dir == *"@"* ]]; then
-    delivery_user=$(echo $delivery_dir | cut -d"@" -f1)
-    delivery_host=$(echo $delivery_dir | cut -d"@" -f2 | cut -d":" -f1)
-    echo "Delivery directory contains an @, have to create files differently"
-    del_path_no_server=${del_path#*:}
-    create_dirs="ssh ${delivery_user}@${delivery_host} 'umask 002 && mkdir -m 775 -p ${del_path_no_server}'"
-    eval $create_dirs
-else
-    mkdir -m 775 -p $del_path
+del_path=${delivery_dir}/${pi}/${inv}/${proj_id}/
+if [[ $build == "hg38_mm39" ]]; then 
+    build="hybrid"
 fi
 
-echo "rsync -avz --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r --exclude-from=${script_dir}/rsync_excludes.txt $out_dir $del_path"
-rsync -avz --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r --exclude-from=${script_dir}/rsync_excludes.txt $out_dir $del_path
+# if delivery_dir starts with /ifs/ - the command needs to be written to 
+# bicdelivery host queue
+if [[ $delivery_dir == /ifs/* ]]; then
+    echo "Delivery directory starts with /ifs/, have to create files differently"
+    create_dirs="umask 002 \
+        && mkdir -m 775 -p ${del_path} \
+        && rsync -avz --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r --exclude-from=${script_dir}/rsync_excludes.txt $out_dir $del_path \
+        && cd $del_path \
+        && cp ${del_path}/${run_num}/project_files/Proj*request.txt . \
+        && singularity exec --bind /data1 --bind /ifs ${pfg_simg} python3 /authorization_db/init_project_permissions.py --project_path $del_path --assembly $build \
+        && rm Proj*request.txt"
+    echo "Adding create_dirs command to delivery queue: $create_dirs"
+    echo "$create_dirs" >> $delivery_queue
+else
+    create_dirs="mkdir -m 775 -p $del_path"
+    eval $create_dirs
+    echo "rsync -avz --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r --exclude-from=${script_dir}/rsync_excludes.txt $out_dir $del_path"
+    rsync -avz --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r --exclude-from=${script_dir}/rsync_excludes.txt $out_dir $del_path
+
+    echo "Project init"
+    proj_init_cmd="cd ${del_path} \
+        && cp ${del_path}/${run_num}/project_files/Proj*request.txt . \
+        && singularity exec --bind /data1 ${pfg_simg} python3 /authorization_db/init_project_permissions.py --project_path $del_path --assembly $build && rm Proj*request.txt"
+    echo "Running project init command: $proj_init_cmd"
+    eval $proj_init_cmd
+fi
 
 #
 # ticket_update
@@ -138,55 +166,13 @@ if [ ! -z "$err_lines" ]; then
     comments="Post-pipeline checks found some issues:\n$err_lines"
 fi
 
-## PEROFRM DELIVERY
-# This is going to be a crazy command because I have to run it in one big line on delivery host.
-del_path_no_server="${del_path#*:}"
-
-cmd_for_delivery="ssh ${delivery_user}@${delivery_host} 'export MODULEPATH=/compute/juno/bic/ROOT/opt/modulefiles:$MODULEPATH \
-&& . /usr/share/Modules/init/bash && module load singularity/3.7.1 && cd $del_path_no_server \
-&& cp ${del_path_no_server}/${run_num}/project_files/Proj*request.txt . \
-&& singularity exec --bind /juno/bic --bind /ifs /juno/opt/common/bic/internal/project_file_generation/pfg.simg python3 /authorization_db/init_project_permissions.py --project_path $del_path_no_server --assembly $build \
-&& rm Proj*request.txt'"
-
-echo "Running delivery command: $cmd_for_delivery"
-eval $cmd_for_delivery
-
-# grab ticket id from run_dir/clickup_task_id.txt if it exists
-if [ -f $run_dir/clickup_task_id.txt ]; then
-    ticket_id=$(cat $run_dir/clickup_task_id.txt)
-fi
-
-rnaseq_ver=$(grep nf-core/rnaseq $out_dir/pipeline_info/*.yml | cut -f2 -d":" | tr -d " ")
-if [ -d $out_dir/star_htseq/differentialExpression_gene ]; then
-    diff_ver=$(grep nf-core/differentialabundance $out_dir/star_htseq/differentialExpression_gene/pipeline_info/*.yml | cut -f2 -d":" | tr -d " ")
-fi
-
-close_pipeline_cmd="python ${script_dir}/close_pipeline_subtasks.py --ticket_id $ticket_id --rnaseq_ver $rnaseq_ver --rsync_dir $rsync_dir --del_path ${del_path_no_server}/${run_num}"
-
-echo -e "RNA-seq pipeline version: $rnaseq_ver"
-if [ ! -z "$diff_ver" ]; then
-    echo -e "Diff pipeline version: $diff_ver"
-    close_pipeline_cmd="$close_pipeline_cmd --diff_ver $diff_ver"
-fi
-if [ ! -z "$comments" ]; then
-    echo -e "Comments for ticket:\n$comments"
-    close_pipeline_cmd="$close_pipeline_cmd --comments $comments"
-fi
-
-if [ ! -z "$ticket_id" ]; then
-    echo "Updating ticket: $ticket_id"
-    script_parent_dir=$(dirname ${script_dir})
-    echo "Running singularity exec -B ${script_parent_dir} -B ${run_dir} $pfg_simg $close_pipeline_cmd"
-    singularity exec -B ${script_parent_dir} -B ${run_dir} $pfg_simg $close_pipeline_cmd
-fi
-
 
 if [ $cluster == "iris" ]; then
     echo "Removing fastq files from CACHE directory"
     rm -r /data1/core001/CACHE/igo/${proj_id}
 fi
 
-if [ ! -z "$pipelines" ] && [ "$pipelines" == "*Fusion-Forte*" ]; then
+if [[ -n "$pipelines" && "$pipelines" == *Fusion-Forte* ]]; then
     echo "Fusion-Forte pipeline found, skipping delivery email"
     exit 0
 fi
@@ -204,3 +190,38 @@ unique_emails=$(echo "$all_emails" | tr '\n' ',' | sed 's/,$//')
 email_delivery_cmd="bash ${script_dir}/email_delivery_template.sh $proj_id $run_num '$inv_name' $unique_emails"
 echo "Running email delivery command: $email_delivery_cmd"
 eval $email_delivery_cmd
+
+
+# grab ticket id from run_dir/clickup_task_id.txt if it exists
+if [ -f $run_dir/clickup_task_id.txt ]; then
+    ticket_id=$(cat $run_dir/clickup_task_id.txt)
+fi
+
+rnaseq_ver=$(grep nf-core/rnaseq $out_dir/pipeline_info/*.yml | cut -f2 -d":" | tr -d " ")
+if [ -d $out_dir/star_htseq/differentialExpression_gene ]; then
+    diff_ver=$(grep nf-core/differentialabundance $out_dir/star_htseq/differentialExpression_gene/pipeline_info/*.yml | cut -f2 -d":" | tr -d " ")
+fi
+
+# if custom and rnaseq_ver is empty, set rnaseq_ver to "custom"
+if [ $custom == true ] && [ -z "$rnaseq_ver" ]; then
+    rnaseq_ver="custom"
+fi
+
+close_pipeline_cmd="python ${script_dir}/close_pipeline_subtasks.py --ticket_id $ticket_id --rnaseq_ver $rnaseq_ver --rsync_dir $rsync_dir --del_path ${del_path}/${run_num}"
+
+echo -e "RNA-seq pipeline version: $rnaseq_ver"
+if [ ! -z "$diff_ver" ]; then
+    echo -e "Diff pipeline version: $diff_ver"
+    close_pipeline_cmd="$close_pipeline_cmd --diff_ver $diff_ver"
+fi
+if [ ! -z "$comments" ]; then
+    echo -e "Comments for ticket:\n$comments"
+    close_pipeline_cmd="$close_pipeline_cmd --comments $comments"
+fi
+
+if [ ! -z "$ticket_id" ]; then
+    echo "Updating ticket: $ticket_id"
+    script_parent_dir=$(dirname ${script_dir})
+    echo "Running singularity exec -B ${script_parent_dir} -B ${run_dir} $pfg_simg $close_pipeline_cmd"
+    singularity exec -B ${script_parent_dir} -B ${run_dir} $pfg_simg $close_pipeline_cmd
+fi

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-slurm_partition="cmobic_cpu,cmobic_pipeline"
+slurm_partition="cmobic_cpu"
 bic_scrnaseq="/data1/core001/work/bic/kazmierk/git/bic-scrnaseq"
 an_dir=$(pwd | sed 's/\/$//')
 

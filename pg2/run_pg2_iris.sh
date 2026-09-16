@@ -17,7 +17,7 @@ fi
 
 pg2_refs_dir=/data1/core001/rsrc/apps/pg2
 repo_dir=/data1/core001/work/bic/kazmierk/git/ProteomeGenerator2
-slurm_partition="cmobic_cpu,cmobic_pipeline"
+slurm_partition="cmobic_cpu"
 
 export PATH=${pg2_refs_dir}/miniconda3/bin:${pg2_refs_dir}/arriba_v1.2.0:$PATH
 

@@ -49,12 +49,14 @@ params_glob = "pipeline_info/params_*.json"
 genome_map = {"hg19":"hg19_local",
               "hg38":"hg38_local",
               "mm10":"mm10_local",
-              "mm39":"mm39_local"}
+              "mm39":"mm39_local",
+              "hg38_mm39":"hg38_mm39_local"}
 
 genome_gene_isupper = {"hg19": True,
                         "hg38": True,
                         "mm10": False,
-                        "mm39": False}
+                        "mm39": False,
+                        "hg38_mm39": True}
 
 def check_file_exists(file_path):
     """Check if a file exists."""

@@ -169,7 +169,7 @@ def import_project(ticket, pipeline):
     #Clickup.add_comment(ticket['id'], f"Import script output:\n{out}")
 
     if return_code != 0:
-        msg = f"Import script failed for ticket {ticket['id']} with return code {return_code}.\n\nOutput:\n{out}"
+        msg = f"Import script failed for ticket {ticket['id']} with return code {return_code}.\n\nOutput:\n{out}\n\nCMD: {cmd}"
         logging.error(f"Import script failed for ticket {ticket['id']}. Return code: {return_code}")
         email_message(EMAIL, "Import Script Failed", msg)
         Clickup.set_custom_field(ticket['id'], UUIDS['Block Auto Import'], 'true')

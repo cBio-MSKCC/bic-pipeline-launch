@@ -89,7 +89,7 @@ def run_create_nf_files(pipeline, run_path, task, strand, build):
         return False
     return True
 
-def start_pipeline(run_path, pipeline, task):
+def start_pipeline(run_path, pipeline, task, additional_fa=""):
     # run the pipeline
     # grab request file 
     request_file = glob.glob(os.path.join(run_path, PROJECT_DATA[pipeline]['request_file_glob']))
@@ -101,7 +101,7 @@ def start_pipeline(run_path, pipeline, task):
     
     script_to_run = os.path.join( os.path.dirname(os.path.abspath(__file__)),PROJECT_DATA[pipeline]['bic_launch_relpath']) 
 
-    cmd = f"{script_to_run} {request_file[0]} {run_path} {EMAIL} {PROJECT_DATA[pipeline]['rsync_dir']} > {run_path}/start_pipeline.log 2>&1"
+    cmd = f"{script_to_run} {request_file[0]} {run_path} {EMAIL} {PROJECT_DATA[pipeline]['rsync_dir']} {additional_fa} > {run_path}/start_pipeline.log 2>&1"
     logging.debug(f"Adding command to queue: {cmd}")
     # append to the queue file
     append_to_file_safely(RUN_QUEUE, cmd)
@@ -198,8 +198,20 @@ def process_sync_task(task, pipeline):
             if not nf_file_create:
                 logging.error(f"create_nf_files failed for task {task['name']}")
                 return
-            
-        bic_launch = start_pipeline(run_path, pipeline, task)
+        
+        logging.info(f"Parent fields: {parent_fields}")
+
+        if 'Comments' in parent_fields.keys() and 'value' in parent_fields['Comments'] and PROJECT_DATA[pipeline]['manual_pipeline_comment'] in parent_fields['Comments']["value"]:
+            logging.info(f"Task {task['name']} has a manual pipeline comment, skipping")
+            email_message(EMAIL, f"Task {task['name']} has a manual pipeline comment", f"Task {task['name']} has a manual pipeline comment. You must do this manually.")
+            Clickup.set_custom_field(task['id'], UUIDS['Email Alerted'], 'true')
+            return
+
+        additional_fa = ""
+        if "Custom Fasta" in parent_fields.keys() and 'value' in parent_fields['Custom Fasta'] and parent_fields['Custom Fasta']["value"] != "":
+            additional_fa = parent_fields['Custom Fasta']["value"]
+        
+        bic_launch = start_pipeline(run_path, pipeline, task, additional_fa)
 
         if not bic_launch:
             logging.error(f"bic_launch failed for task {task['name']}")
@@ -260,7 +272,7 @@ def process_todo_task(task, pipeline):
         project_path = parent_fields['ProjectFolder']["value"]
         
 
-        if 'Comments' in parent_fields.keys() and PROJECT_DATA[pipeline]['manual_pipeline_comment'] in parent_fields['Comments']:
+        if 'Comments' in parent_fields.keys() and 'value' in parent_fields['Comments'] and PROJECT_DATA[pipeline]['manual_pipeline_comment'] in parent_fields['Comments']["value"]:
             logging.info(f"Task {task['name']} has a manual pipeline comment, skipping")
             email_message(EMAIL, f"Task {task['name']} has a manual pipeline comment", f"Task {task['name']} has a manual pipeline comment. You must do this manually.")
             Clickup.set_custom_field(task['id'], UUIDS['Email Alerted'], 'true')

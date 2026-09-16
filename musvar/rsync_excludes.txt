@@ -5,6 +5,8 @@ work/
 .cache
 .nextflow.log.*
 */multiqc_report_data
+*/multiqc_data
+*/multiqc_plots
 .sendmail_tmp.html
 */multiqc_report_plots
 */raw/*.zip
@@ -17,3 +19,5 @@ work/
 */samtools_stats
 */shinyngs_app
 */differentialExpression_gene/other
+*/preprocessing
+*/reference

@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 """Build a Sarek somatic (tumor/normal) input sheet from an IGO sample mapping.
 
-Python port of makeSarekInputSomatic.R.
-
-usage: makeSarekInputSomatic.py SAMPLE_MAPPING.txt
+usage: make_input_somatic.py SAMPLE_MAPPING.txt
 """
 
+import csv
 import gzip
 import os
 import re
 import sys
 from pathlib import Path
-
-import pandas as pd
 
 
 def get_lane_from_fastq(ff: str) -> str:
@@ -31,78 +28,113 @@ def get_fastq_files(fdir: str, read: int) -> list[str]:
     matches = [str(p) for p in Path(fdir).rglob("*.fastq.gz") if pattern.search(p.name)]
     return sorted(matches)
 
-def add_patient_ids(manifest: pd.DataFrame) -> pd.DataFrame:
-    """Add a ``patient`` column grouping each tumor with its paired normal.
 
-    A patient is a normal sample plus every tumor whose ``Paired`` points at it.
-    Patient IDs (``P_1``, ``P_2``, ...) are numbered by first appearance.
+def clean_sample(sample: str) -> str:
+    sample = re.sub(r"^s_", "", sample)
+    if "Mouse-Pooled-Normal" in sample:
+        sample = re.sub(r"-\d+$", "", sample)
+    return sample
+
+
+def add_patient_ids(manifest: list[dict]) -> None:
+    """Set ``patient`` so each normal and the tumors paired to it share an id.
+
+    IDs (``P_1``, ``P_2``, ...) are numbered by first appearance.
+    A non-tumor row groups on its own sample name. A tumor groups on ``Paired``.
     """
-    manifest = manifest.copy()
-    group_key = manifest["sample"].where(
-        manifest["SampleType"] != "Tumor", manifest["Paired"]
-    )
-    manifest["patient"] = "P_" + (pd.factorize(group_key)[0] + 1).astype(str)
-    return manifest
+    group_ids = {}
+    next_id = 1
+    for row in manifest:
+        key = row["sample"] if row.get("SampleType") != "Tumor" else row.get("Paired", "")
+        if key not in group_ids:
+            group_ids[key] = f"P_{next_id}"
+            next_id += 1
+        row["patient"] = group_ids[key]
+
+
+def read_mapping(mapping_file: str) -> list[tuple[str, str]]:
+    """Return (sample, fastq_dir) from a headerless TSV. Columns used are 2 and 4."""
+    samples = []
+    with open(mapping_file, newline="") as fh:
+        for cols in csv.reader(fh, delimiter="\t"):
+            if len(cols) < 4 or not any(cols):
+                continue
+            samples.append((clean_sample(cols[1]), cols[3]))
+    return samples
+
+
+def expand_fastq_pairs(samples: list[tuple[str, str]]) -> list[dict]:
+    rows = []
+    for sample, fdir in samples:
+        for fastq_1, fastq_2 in zip(get_fastq_files(fdir, 1), get_fastq_files(fdir, 2)):
+            rows.append({"sample": sample, "fastq_1": fastq_1, "fastq_2": fastq_2})
+    return rows
+
+
+def write_csv(path: str, fieldnames: list[str], rows: list[dict]) -> None:
+    with open(path, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print("\n   usage: makeSarekInputSomatic.py SAMPLE_MAPPING.txt\n")
+        print("\n   usage: make_input_somatic.py SAMPLE_MAPPING.txt\n")
         sys.exit(0)
 
     mapping_file = sys.argv[1]
+    rows = expand_fastq_pairs(read_mapping(mapping_file))
 
-    # --- Parse the mapping file (tab-separated, no header) ---
-    mapping = pd.read_csv(mapping_file, sep="\t", header=None, dtype=str)
-    fdir = mapping[[1, 3]].rename(columns={1: "sample", 3: "fdir"})
-
-    fdir["sample"] = fdir["sample"].str.replace(r"^s_", "", regex=True)
-    is_pool = fdir["sample"].str.contains("Mouse-Pooled-Normal")
-    fdir.loc[is_pool, "sample"] = fdir.loc[is_pool, "sample"].str.replace(
-        r"-\d+$", "", regex=True
-    )
-
-    # Expand each directory into one row per R1/R2 fastq pair.
-    rows = []
-    for rec in fdir.itertuples(index=False):
-        fastq_1 = get_fastq_files(rec.fdir, 1)
-        fastq_2 = get_fastq_files(rec.fdir, 2)
-        for f1, f2 in zip(fastq_1, fastq_2):
-            rows.append({"sample": rec.sample, "fastq_1": f1, "fastq_2": f2})
-    fdir = pd.DataFrame(rows, columns=["sample", "fastq_1", "fastq_2"])
-
-    # --- R1/R2 pairing sanity check ---
-    expected_r2 = fdir["fastq_1"].str.replace("_R1_", "_R2_", regex=False)
-    if not (expected_r2 == fdir["fastq_2"]).all():
+    if any(row["fastq_1"].replace("_R1_", "_R2_") != row["fastq_2"] for row in rows):
         print("\n\nFATAL ERROR R1,R2 mismatch\n")
         raise SystemExit("FATAL ERROR")
 
-    # --- Metadata: mapping -> m, .txt ->  ---
     mfile = mapping_file.replace("mapping", "metadata")
     if not os.path.exists(mfile):
         print(f"\n\n   Metadata {mfile} does not exists")
         print("   Create file with columns:\n      sample,patient,type")
         print("       type==[Normal|Tumor] (Case sensitive)\n")
         print("   Template file created _sample_manifest.csv\n")
-        template = fdir[["sample"]].drop_duplicates().copy()
-        template["patient"] = pd.NA
-        template["type"] = pd.NA
-        template.to_csv("_sample_manifest.csv", index=False)
+        seen = list(dict.fromkeys(row["sample"] for row in rows))
+        write_csv(
+            "_sample_manifest.csv",
+            ["sample", "patient", "type"],
+            [{"sample": sample, "patient": "", "type": ""} for sample in seen],
+        )
         sys.exit(0)
 
-    manifest = pd.read_csv(mfile, dtype=str)
-    manifest["status"] = (manifest["SampleType"] == "Tumor").astype(int)
-    manifest["sample"] = manifest["SampleName"].str.replace(r"^s_", "", regex=True)
+    with open(mfile, newline="") as fh:
+        manifest = list(csv.DictReader(fh))
+    for row in manifest:
+        row["status"] = "1" if row.get("SampleType") == "Tumor" else "0"
+        row["sample"] = re.sub(r"^s_", "", row.get("SampleName") or "")
+    add_patient_ids(manifest)
 
-    manifest = add_patient_ids(manifest)
+    by_sample: dict[str, list[dict]] = {}
+    for row in manifest:
+        by_sample.setdefault(row["sample"], []).append(row)
 
-    # --- Join, compute lane, write output ---
-    sarek_input = fdir.merge(manifest, on="sample", how="left")
-    sarek_input["lane"] = sarek_input["fastq_1"].apply(get_lane_from_fastq)
-    sarek_input = sarek_input[["patient", "sample", "status", "lane", "fastq_1", "fastq_2"]]
+    sarek_input = []
+    for rec in rows:
+        matches = by_sample.get(rec["sample"], [None])
+        for meta in matches:
+            sarek_input.append({
+                "patient": "" if meta is None else meta["patient"],
+                "sample": rec["sample"],
+                "status": "" if meta is None else meta["status"],
+                "lane": get_lane_from_fastq(rec["fastq_1"]),
+                "fastq_1": rec["fastq_1"],
+                "fastq_2": rec["fastq_2"],
+            })
 
-    sarek_input.to_csv("sarek_input_somatic.csv", index=False)
+    outfile = os.path.join(os.path.dirname(mapping_file), "sarek_input_somatic.csv")
+    write_csv(
+        outfile,
+        ["patient", "sample", "status", "lane", "fastq_1", "fastq_2"],
+        sarek_input,
+    )
 
 
 if __name__ == "__main__":
     main()
-

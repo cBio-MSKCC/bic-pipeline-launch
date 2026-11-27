@@ -28,6 +28,8 @@ pfg_simg=$4
 delivery_dir=$5
 cluster=$6
 
+delivery_queue="/data1/core001/work/bic/bot01/queues/isvzeta_queue.txt"
+
 # if outdir is not a full path, add it to run_dir.
 if [[ $out_dir != /* ]]; then
     out_dir=$run_dir/$out_dir
@@ -37,7 +39,7 @@ fi
 # Move project to project_files directory
 #
 mkdir -p $out_dir/project_files
-cp $run_dir/*sample_mapping.txt $run_dir/*request.txt $run_dir/*input.csv $out_dir/project_files/
+cp $run_dir/*sample_mapping.txt $run_dir/*request.txt $run_dir/*input*.csv $out_dir/project_files/
 
 #
 # Rsync the results to the rsync directory
@@ -61,6 +63,14 @@ if [ -z "$pi" ] || [ -z "$inv" ]; then
     exit 1
 fi
 del_path=${delivery_dir}/${pi}/${inv}/${proj_id}/
+del_build=$build
+if [[ $del_build == "hg38_mm39" ]]; then 
+    del_build="hybrid"
+fi
+
+if [[ $del_build == "mm38" ]]; then
+    del_build="mm10"
+fi
 
 delivery_user="none"
 delivery_host="none"
@@ -76,9 +86,16 @@ else
     mkdir -m 775 -p $del_path
 fi
 
-echo "rsync -avz --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r --exclude-from=${script_dir}/rsync_excludes.txt $out_dir $del_path"
-rsync -avz --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r --exclude-from=${script_dir}/rsync_excludes.txt $out_dir $del_path
+echo "rsync -avz --chmod=D770,F660 --exclude-from=${script_dir}/rsync_excludes.txt $out_dir $del_path"
+rsync -avz --chmod=D770,F660 --exclude-from=${script_dir}/rsync_excludes.txt $out_dir $del_path
 
+echo "Project init"
+proj_init_cmd="cd ${del_path} \
+    && cp ${del_path}/${run_num}/project_files/Proj*request.txt . \
+    && singularity exec --bind /data1 ${pfg_simg} python3 /authorization_db/init_project_permissions.py --project_path $del_path --assembly $del_build && rm Proj*request.txt"
+echo "Adding project init command to delivery queue: $proj_init_cmd"
+#eval $proj_init_cmd
+echo "$proj_init_cmd" >> $delivery_queue
 
 #
 # ticket_update
@@ -88,28 +105,7 @@ rsync -avz --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r --exclude-from=${script_
 # close those tickets.
 comments=""
 ticket_id=""
-diff_ver=""
 
-## PEROFRM DELIVERY
-# This is going to be a crazy command because I have to run it in one big line on delivery host.
-del_path_no_server="${del_path#*:}"
-del_build=$build
-if [[ $del_build == "hg38_mm39" ]]; then 
-    del_build="hybrid"
-fi
-
-if [[ $del_build == "mm38" ]]; then
-    del_build="mm10"
-fi
-
-cmd_for_delivery="ssh ${delivery_user}@${delivery_host} 'export MODULEPATH=/compute/juno/bic/ROOT/opt/modulefiles:$MODULEPATH \
-&& . /usr/share/Modules/init/bash && module load singularity/3.7.1 && cd $del_path_no_server \
-&& cp ${del_path_no_server}/${run_num}/project_files/Proj*request.txt . \
-&& singularity exec --bind /juno/bic --bind /ifs /juno/opt/common/bic/internal/project_file_generation/pfg.simg python3 /authorization_db/init_project_permissions.py --project_path $del_path_no_server --assembly $del_build \
-&& rm Proj*request.txt'"
-
-echo "Running delivery command: $cmd_for_delivery"
-eval $cmd_for_delivery
 
 if [ $cluster == "iris" ]; then
     echo "Removing fastq files from CACHE directory"
@@ -129,3 +125,27 @@ unique_emails=$(echo "$all_emails" | tr '\n' ',' | sed 's/,$//')
 email_delivery_cmd="bash ${script_dir}/email_delivery_template.sh $proj_id $run_num '$inv_name' $unique_emails"
 echo "Running email delivery command: $email_delivery_cmd"
 eval $email_delivery_cmd
+
+
+#
+# Close tickets
+#
+# grab ticket id from run_dir/clickup_task_id.txt if it exists
+if [ -f $run_dir/clickup_task_id.txt ]; then
+    ticket_id=$(cat $run_dir/clickup_task_id.txt)
+else
+    echo "No ticket id found, not closing tickets"
+    exit 1
+fi
+
+# get pipeline version from pipeline_info/nf_core_*_versions.yml
+pipeline_version=$(grep -m 1 bic-sarek $out_dir/pipeline_info/nf_core_*_versions.yml | cut -f2 -d":" | tr -d " ")
+
+if [ -z "$pipeline_version" ]; then
+    echo "No pipeline version found, not closing tickets"
+    exit 1
+fi
+
+close_tickets_cmd="python ${script_dir}/close_pipeline_tickets.py --ticket_id $ticket_id --rsync_dir $rsync_dir --del_path $del_path --pipeline_version $pipeline_version"
+echo "running close tickets command: $close_tickets_cmd"
+eval $close_tickets_cmd

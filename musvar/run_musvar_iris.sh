@@ -1,7 +1,5 @@
 #!/bin/bash
-
 set -e
-
 
 host=$(hostname)
 script_dir=$(dirname "$(realpath "$0")")
@@ -16,7 +14,7 @@ profile="singularity"
 rsync_only=false
 slurm_partition="cmobic_cpu"
 pfg_simg="/usersoftware/core001/common/bic/internal/project_file_generation/pfg.simg"
-delivery_dir="kristakaz@terra:/ifs/rtsia01/bic/results"
+delivery_dir="/data1/core002/res/bic/results"
 
 # usage:
 # run_musvar_terra.sh <request file> <analysis directory> <email> <rsync_dir> [extra args]
@@ -51,14 +49,15 @@ extra_args=$@
 declare -A targets_map
 targets_map["M-IMPACT"]="impact"
 targets_map["TWIST"]="twist"
+targets_map["M-IMPACT_v2_mm10"]="impact"
 
 declare -A genome_map
 genome_map["mm38"]="GRCm38_local"
 genome_map["mm39"]="GRCm39_local"
 
-if [ ! -f $an_dir/input.csv ]; then
+if [ ! -f $an_dir/sarek_input_somatic.csv ]; then
     echo
-    echo "Error: $an_dir/input.csv not found. This is required for the sarek pipeline"
+    echo "Error: $an_dir/sarek_input_somatic.csv not found. This is required for the sarek pipeline"
     echo
     exit
 fi
@@ -69,10 +68,10 @@ run_number=$(grep ^RunNumber $req_file | cut -f2 -d":" | tr -d " " | xargs print
 
 ### targets pulled from request file
 ###
-targets=$(grep ^Targets: $req_file | cut -f2 -d":" | tr -d " " | xargs printf "%s" )
+targets=$(grep ^Assay: $req_file | cut -f2 -d":" | tr -d " " | xargs printf "%s" )
 if [ -z "$targets" ]; then
     echo
-    echo "Error: No taregets found in request file. This is required for the sarek pipeline"
+    echo "Error: No assay found in request file. This is required for the sarek pipeline"
     echo
     exit
 fi
@@ -122,7 +121,7 @@ if [ $rsync_only == false ]; then
         --igenomes_ignore true \
         --email_on_fail $email \
         --tools freebayes,mutect2,strelka,manta \
-        --input ${an_dir}/input.csv \
+        --input ${an_dir}/sarek_input_somatic.csv \
         --outdir ${an_dir}/r_${run_number}\""
     
     # so we can rerun by hand if needed

@@ -21,9 +21,9 @@ rsync_only=false
 slurm_partition="cmobic_cpu"
 pandas_simg="/data1/core001/rsrc/genomic/bic/singularity/pandas/pandas.simg"
 pfg_simg="/usersoftware/core001/common/bic/internal/project_file_generation/pfg.simg"
-delivery_dir="/ifs/rtsia01/bic/results"
+#delivery_dir="/ifs/rtsia01/bic/results"
 additional_fasta=""
-#delivery_dir="/data1/core002/res/bic/results"
+delivery_dir="/data1/core002/res/bic/results"
 
 # usage:
 # run_rnaseq.sh <request file> <analysis directory> <email> <rsync_dir> [DE_only] [extra args]
@@ -107,7 +107,7 @@ if [ $transcript == true ]; then
 fi
 genome=${genome_map[$build]}
 
-export MODULEPATH=/etc/modulefiles:/usr/share/modulefiles:/admin/software/lmod/modulefiles:/admin/software/spack/spack_modulefiles/Core
+export MODULEPATH=/etc/modulefiles:/usr/share/modulefiles:/admin/software/lmod/modulefiles:/admin/software/spack/spack_modulefiles/Core:/usersoftware/core001/common/bic/modulefiles
 export MODULEPATH_ROOT=/usr/share/modulefiles
 export MODULESHOME=/usr/share/lmod/lmod
 mkdir -p ${an_dir}/work/scratch
@@ -116,7 +116,7 @@ export NXF_SINGULARITY_CACHEDIR=/usersoftware/core001/common/bic/internal/.singu
 
 . /usr/share/lmod/lmod/init/bash
 ##module load singularityce/4.1.0
-module load nextflow/24.10.0  
+module load nextflow/26.04.3  
 module load openjdk/17.0.11_9
 
 dir_name=$(basename $an_dir)

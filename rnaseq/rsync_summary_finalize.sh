@@ -52,7 +52,7 @@ curr_pwd=$(pwd)
 # if gsea report directory exists, create a softlink to the index.html file
 if [ -d ${out_dir}/star_htseq/differentialExpression_gene/report/gsea ]; then
     echo "GSEA report directory exists, creating softlink to index.html"
-    cd ${out_dir}/star_htseq/differentialExpression_gene/report/gsea;
+    cd ${out_dir}/star_htseq/differentialExpression_gene/report/gsea/contrasts/;
     # if *index.html files are already softlinked, delete the softlink and redo it
     if ls *.index.html 1>/dev/null 2>&1; then
         rm *.index.html
@@ -88,7 +88,7 @@ if [ $custom == false ]; then
 fi
 
 #
-# Rsync the results to the rsync directory
+# Rsync the results to the rsync directory (local)
 #
 
 echo "rsync -avzP --exclude-from=${script_dir}/rsync_excludes.txt $run_dir $rsync_dir"
@@ -123,32 +123,18 @@ if [[ $build == "hg38_mm39" ]]; then
     build="hybrid"
 fi
 
-# if delivery_dir starts with /ifs/ - the command needs to be written to 
-# bicdelivery host queue
-if [[ $delivery_dir == /ifs/* ]]; then
-    echo "Delivery directory starts with /ifs/, have to create files differently"
-    create_dirs="umask 002 \
-        && mkdir -m 775 -p ${del_path} \
-        && rsync -avz --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r --exclude-from=${script_dir}/rsync_excludes.txt $out_dir $del_path \
-        && cd $del_path \
-        && cp ${del_path}/${run_num}/project_files/Proj*request.txt . \
-        && singularity exec --bind /data1 --bind /ifs ${pfg_simg} python3 /authorization_db/init_project_permissions.py --project_path $del_path --assembly $build \
-        && rm Proj*request.txt"
-    echo "Adding create_dirs command to delivery queue: $create_dirs"
-    echo "$create_dirs" >> $delivery_queue
-else
-    create_dirs="mkdir -m 775 -p $del_path"
-    eval $create_dirs
-    echo "rsync -avz --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r --exclude-from=${script_dir}/rsync_excludes.txt $out_dir $del_path"
-    rsync -avz --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r --exclude-from=${script_dir}/rsync_excludes.txt $out_dir $del_path
+create_dirs="mkdir -m 775 -p $del_path"
+eval $create_dirs
+echo "rsync -avz --chmod=D770,F660 --exclude-from=${script_dir}/rsync_excludes.txt $out_dir $del_path"
+rsync -avz --chmod=D770,F660 --exclude-from=${script_dir}/rsync_excludes.txt $out_dir $del_path
 
-    echo "Project init"
-    proj_init_cmd="cd ${del_path} \
-        && cp ${del_path}/${run_num}/project_files/Proj*request.txt . \
-        && singularity exec --bind /data1 ${pfg_simg} python3 /authorization_db/init_project_permissions.py --project_path $del_path --assembly $build && rm Proj*request.txt"
-    echo "Running project init command: $proj_init_cmd"
-    eval $proj_init_cmd
-fi
+echo "Project init"
+proj_init_cmd="cd ${del_path} \
+    && cp ${del_path}/${run_num}/project_files/Proj*request.txt . \
+    && singularity exec --bind /data1 ${pfg_simg} python3 /authorization_db/init_project_permissions.py --project_path $del_path --assembly $build && rm Proj*request.txt"
+echo "Adding project init command to delivery queue: $proj_init_cmd"
+#eval $proj_init_cmd
+echo "$proj_init_cmd" >> $delivery_queue
 
 #
 # ticket_update
@@ -199,7 +185,7 @@ fi
 
 rnaseq_ver=$(grep nf-core/rnaseq $out_dir/pipeline_info/*.yml | cut -f2 -d":" | tr -d " ")
 if [ -d $out_dir/star_htseq/differentialExpression_gene ]; then
-    diff_ver=$(grep nf-core/differentialabundance $out_dir/star_htseq/differentialExpression_gene/pipeline_info/*.yml | cut -f2 -d":" | tr -d " ")
+    diff_ver=$(grep nf-core/differentialabundance $out_dir/star_htseq/differentialExpression_gene/pipeline_info/nf_core_*_versions.yml | cut -f2 -d":" | tr -d " ")
 fi
 
 # if custom and rnaseq_ver is empty, set rnaseq_ver to "custom"

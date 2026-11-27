@@ -36,11 +36,11 @@ multiqc_report = "metrics/multiqc/star_htseq/multiqc_report.html"
 merged_counts_file = "star_htseq/htseq/htseq.merged.counts.tsv"
 alignment_path = "star_htseq/alignment/"
 alignment_suffix = ".markdup.sorted.bam"
-de_tables_dir = "star_htseq/differentialExpression_gene/tables/differential/"
+de_tables_dir = "star_htseq/differentialExpression_gene/tables/differential/contrasts/"
 de_full_table_suffix = ".deseq2.de_results.tsv"
 de_filtered_table_suffix = ".deseq2.de_results_filtered.tsv"
-de_report_dir = "star_htseq/differentialExpression_gene/report/"
-de_gsea_dir = "star_htseq/differentialExpression_gene/report/gsea/"
+de_report_dir = "star_htseq/differentialExpression_gene/report/contrasts/"
+de_gsea_dir = "star_htseq/differentialExpression_gene/report/gsea/contrasts/"
 input_file = "input.csv"
 request_glob = "*_request.txt"
 contrasts_glob = "contrasts*.csv"
@@ -72,7 +72,7 @@ def perform_de_checks(req_data, odir, contrast_files):
     # Check that each contrast file has a corresponding DE report html
     for contrast_file in contrast_files:
         contrast_name = os.path.basename(contrast_file).replace(".csv", "")
-        if not check_file_exists(os.path.join(odir, de_report_dir, f"{contrast_name}.html")):
+        if not check_file_exists(os.path.join(odir, de_report_dir, f"{contrast_name}_differentialabundance_report.html")):
             error_found = True
             continue
 
@@ -83,8 +83,8 @@ def perform_de_checks(req_data, odir, contrast_files):
                 if line.strip() and not line.startswith('#') and not line.startswith('id'):
                     comparison_name = line.split(',')[0]
 
-                    de_result_file = os.path.join(odir, de_tables_dir, f"{comparison_name}{de_full_table_suffix}")
-                    de_filtered_file = os.path.join(odir, de_tables_dir, f"{comparison_name}{de_filtered_table_suffix}")
+                    de_result_file = os.path.join(odir, de_tables_dir, f"{comparison_name}_{contrast_name}{de_full_table_suffix}")
+                    de_filtered_file = os.path.join(odir, de_tables_dir, f"{comparison_name}_{contrast_name}{de_filtered_table_suffix}")
 
                     if not check_file_exists(de_filtered_file):
                         error_found = True
@@ -103,7 +103,7 @@ def perform_de_checks(req_data, odir, contrast_files):
                                 error_found = True
 
                     # GSEA - check that this softlink is a file that exists
-                    gsea_links = glob.glob(os.path.join(odir, de_gsea_dir, f"{comparison_name}.*.index.html"))
+                    gsea_links = glob.glob(os.path.join(odir, de_gsea_dir, f"{comparison_name}_{contrast_name}.*.index.html"))
                     if not gsea_links:
                         logging.error(f"No GSEA report links found for comparison {comparison_name}.")
                         error_found = True

@@ -1,0 +1,45 @@
+site_name: BIC Pipeline Launch
+site_url: https://cBio-MSKCC.github.io/bic-pipeline-launch/
+repo_url: https://github.com/cBio-MSKCC/bic-pipeline-launch
+repo_name: cBio-MSKCC/bic-pipeline-launch
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Overview: getting-started/index.md
+  - Pipelines:
+      - Overview: pipelines/index.md
+      - RNASeq: pipelines/rnaseq.md
+      - MusVar: pipelines/musvar.md
+      - scRNA: pipelines/scrna.md
+      - Variants: pipelines/variants.md
+  - Automation:
+      - Overview: automation/index.md
+      - Fastq sync: automation/fastq-sync.md
+
+extra:
+  generator: false
+  version:
+    provider: mike
+    default: stable

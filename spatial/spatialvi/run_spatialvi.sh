@@ -1,6 +1,6 @@
 #!/bin/bash
 
-slurm_partition="cmobic_cpu,cmobic_pipeline"
+slurm_partition="cmobic_cpu"
 bic_spatialvi="/data1/core001/work/bic/kazmierk/git/bic-spatialvi"
 profile="singularity"
 email="kazmierk@mskcc.org"

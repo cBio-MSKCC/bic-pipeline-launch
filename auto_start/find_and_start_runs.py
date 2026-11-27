@@ -54,7 +54,7 @@ def copy_all_files(src_dir, dest_dir):
         src_file = os.path.join(src_dir, filename)
         dest_file = os.path.join(dest_dir, filename)
         if os.path.isfile(src_file):
-            shutil.copy2(src_file, dest_file)
+            shutil.copy(src_file, dest_file)
 
 def run_create_nf_files(pipeline, run_path, task, strand, build):
     # run the create_nf_files script
@@ -89,7 +89,23 @@ def run_create_nf_files(pipeline, run_path, task, strand, build):
         return False
     return True
 
-def start_pipeline(run_path, pipeline, task):
+def run_prepare_files(pipeline, run_path, task, mapping):
+    # run the prepare_files script
+    args = [
+        arg.format(mapping=mapping)
+        for arg in PROJECT_DATA[pipeline]['prepare_files_script_args']
+    ]
+    cmd = "python " + os.path.join( os.path.dirname(os.path.abspath(__file__)),PROJECT_DATA[pipeline]['prepare_files_script']) + " " + " ".join(args)
+    logging.info(f"Running command: {cmd}")
+    return_code = os.system(cmd)
+    logging.debug("Command finished")
+    if return_code != 0:
+        logging.error(f"Command {cmd} failed with return code {return_code}")
+        email_message(EMAIL, f"Command {cmd} failed", f"Command {cmd} failed with return code {return_code}. You must do this manually.")
+    else:
+        return return_code
+
+def start_pipeline(run_path, pipeline, task, additional_fa=""):
     # run the pipeline
     # grab request file 
     request_file = glob.glob(os.path.join(run_path, PROJECT_DATA[pipeline]['request_file_glob']))
@@ -101,7 +117,7 @@ def start_pipeline(run_path, pipeline, task):
     
     script_to_run = os.path.join( os.path.dirname(os.path.abspath(__file__)),PROJECT_DATA[pipeline]['bic_launch_relpath']) 
 
-    cmd = f"{script_to_run} {request_file[0]} {run_path} {EMAIL} {PROJECT_DATA[pipeline]['rsync_dir']} > {run_path}/start_pipeline.log 2>&1"
+    cmd = f"{script_to_run} {request_file[0]} {run_path} {EMAIL} {PROJECT_DATA[pipeline]['rsync_dir']} {additional_fa} > {run_path}/start_pipeline.log 2>&1"
     logging.debug(f"Adding command to queue: {cmd}")
     # append to the queue file
     append_to_file_safely(RUN_QUEUE, cmd)
@@ -144,7 +160,9 @@ def process_sync_task(task, pipeline):
         logging.debug(f"Parent task {parent['name']} found")
 
         project_name = parent['name']
-        valid_siblings = [ subtask['id'] for subtask in parent['subtasks'] if any(ticket in subtask['name'] for ticket in PROJECT_DATA[pipeline]['siblings_to_start']) ]
+        valid_siblings = []
+        if "siblings_to_start" in PROJECT_DATA[pipeline].keys():
+            valid_siblings = [ subtask['id'] for subtask in parent['subtasks'] if any(ticket in subtask['name'] for ticket in PROJECT_DATA[pipeline]['siblings_to_start']) ]
 
         # let's find run path, and then if the correct mapping file is present, we can start the pipeline
         run_path = f"{PROJECT_DATA[pipeline]['work_dir']}/{project_name}"
@@ -174,6 +192,9 @@ def process_sync_task(task, pipeline):
         new_mapping_file = mapping.replace("_iris.txt", "")
         os.rename(mapping, new_mapping_file)
 
+        #resetting mapping variable to the new mapping filename
+        mapping = new_mapping_file
+
         parent_id = task.get('parent', None)
         if parent_id is None:
             logging.info(f"Task {task['name']} has no parent task, skipping")
@@ -185,9 +206,11 @@ def process_sync_task(task, pipeline):
         # record sibling tasks whose name ends with a value in sibling_to_start
         parent_fields = Clickup.format_field_map({'fields': parent['custom_fields']})
         build = parent_fields['Build']["value"].lower()
-        strand = parent_fields['Strand']["value"].lower()
-        if strand == "none":
-            strand = "unstranded"
+        strand = None
+        if "Strand" in parent_fields.keys() and 'value' in parent_fields['Strand'] and parent_fields['Strand']["value"] != "":
+            strand = parent_fields['Strand']["value"].lower()
+            if strand == "none":
+                strand = "unstranded"
         rsync_dir = PROJECT_DATA[pipeline]['rsync_dir']
 
         # step one - run pfg to nf script
@@ -198,8 +221,27 @@ def process_sync_task(task, pipeline):
             if not nf_file_create:
                 logging.error(f"create_nf_files failed for task {task['name']}")
                 return
-            
-        bic_launch = start_pipeline(run_path, pipeline, task)
+
+        if "prepare_files_script" in PROJECT_DATA[pipeline]:
+            logging.debug(f"Running {PROJECT_DATA[pipeline]['prepare_files_script']}")
+            prepare_files = run_prepare_files(pipeline, run_path, task, mapping)
+            if prepare_files != 0:
+                logging.error(f"prepare_files failed for task {task['name']}")
+                return
+        
+        logging.info(f"Parent fields: {parent_fields}")
+
+        if 'Comments' in parent_fields.keys() and 'value' in parent_fields['Comments'] and "manual_pipeline_comment" in PROJECT_DATA[pipeline].keys() and PROJECT_DATA[pipeline]['manual_pipeline_comment'] in parent_fields['Comments']["value"]:
+            logging.info(f"Task {task['name']} has a manual pipeline comment, skipping")
+            email_message(EMAIL, f"Task {task['name']} has a manual pipeline comment", f"Task {task['name']} has a manual pipeline comment. You must do this manually.")
+            Clickup.set_custom_field(task['id'], UUIDS['Email Alerted'], 'true')
+            return
+
+        additional_fa = ""
+        if "Custom Fasta" in parent_fields.keys() and 'value' in parent_fields['Custom Fasta'] and parent_fields['Custom Fasta']["value"] != "":
+            additional_fa = parent_fields['Custom Fasta']["value"]
+        
+        bic_launch = start_pipeline(run_path, pipeline, task, additional_fa)
 
         if not bic_launch:
             logging.error(f"bic_launch failed for task {task['name']}")
@@ -254,17 +296,19 @@ def process_todo_task(task, pipeline):
         # record parent task name, 
         # record sibling tasks whose name ends with a value in sibling_to_start
         project_name = parent['name']
-        valid_siblings = [ subtask['id'] for subtask in parent['subtasks'] if any(ticket in subtask['name'] for ticket in PROJECT_DATA[pipeline]['siblings_to_start']) ]
+        valid_siblings = []
+        if "siblings_to_start" in PROJECT_DATA[pipeline].keys():
+            valid_siblings = [ subtask['id'] for subtask in parent['subtasks'] if any(ticket in subtask['name'] for ticket in PROJECT_DATA[pipeline]['siblings_to_start']) ]
 
         parent_fields = Clickup.format_field_map({'fields': parent['custom_fields']})
         project_path = parent_fields['ProjectFolder']["value"]
         
-
-        if 'Comments' in parent_fields.keys() and PROJECT_DATA[pipeline]['manual_pipeline_comment'] in parent_fields['Comments']:
-            logging.info(f"Task {task['name']} has a manual pipeline comment, skipping")
-            email_message(EMAIL, f"Task {task['name']} has a manual pipeline comment", f"Task {task['name']} has a manual pipeline comment. You must do this manually.")
-            Clickup.set_custom_field(task['id'], UUIDS['Email Alerted'], 'true')
-            return
+        if "manual_pipeline_comment" in PROJECT_DATA[pipeline].keys():
+            if 'Comments' in parent_fields.keys() and 'value' in parent_fields['Comments'] and PROJECT_DATA[pipeline]['manual_pipeline_comment'] in parent_fields['Comments']["value"]:
+                logging.info(f"Task {task['name']} has a manual pipeline comment, skipping")
+                email_message(EMAIL, f"Task {task['name']} has a manual pipeline comment", f"Task {task['name']} has a manual pipeline comment. You must do this manually.")
+                Clickup.set_custom_field(task['id'], UUIDS['Email Alerted'], 'true')
+                return
         
         # make sure RunPath is not already made
         run_path = f"{PROJECT_DATA[pipeline]['work_dir']}/{project_name}"

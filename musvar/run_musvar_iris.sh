@@ -1,7 +1,5 @@
 #!/bin/bash
-
 set -e
-
 
 host=$(hostname)
 script_dir=$(dirname "$(realpath "$0")")
@@ -14,7 +12,9 @@ fi
 sarek_dir="/usersoftware/core001/common/bic/internal/bic-sarek/dev"
 profile="singularity"
 rsync_only=false
-slurm_partition="cmobic_cpu,cmobic_pipeline"
+slurm_partition="cmobic_cpu"
+pfg_simg="/usersoftware/core001/common/bic/internal/project_file_generation/pfg.simg"
+delivery_dir="/data1/core002/res/bic/results"
 
 # usage:
 # run_musvar_terra.sh <request file> <analysis directory> <email> <rsync_dir> [extra args]
@@ -49,14 +49,15 @@ extra_args=$@
 declare -A targets_map
 targets_map["M-IMPACT"]="impact"
 targets_map["TWIST"]="twist"
+targets_map["M-IMPACT_v2_mm10"]="impact"
 
 declare -A genome_map
 genome_map["mm38"]="GRCm38_local"
 genome_map["mm39"]="GRCm39_local"
 
-if [ ! -f $an_dir/input.csv ]; then
+if [ ! -f $an_dir/sarek_input_somatic.csv ]; then
     echo
-    echo "Error: $an_dir/input.csv not found. This is required for the sarek pipeline"
+    echo "Error: $an_dir/sarek_input_somatic.csv not found. This is required for the sarek pipeline"
     echo
     exit
 fi
@@ -67,10 +68,10 @@ run_number=$(grep ^RunNumber $req_file | cut -f2 -d":" | tr -d " " | xargs print
 
 ### targets pulled from request file
 ###
-targets=$(grep ^Targets: $req_file | cut -f2 -d":" | tr -d " " | xargs printf "%s" )
+targets=$(grep ^Assay: $req_file | cut -f2 -d":" | tr -d " " | xargs printf "%s" )
 if [ -z "$targets" ]; then
     echo
-    echo "Error: No taregets found in request file. This is required for the sarek pipeline"
+    echo "Error: No assay found in request file. This is required for the sarek pipeline"
     echo
     exit
 fi
@@ -98,7 +99,6 @@ mkdir -p ${an_dir}/work/scratch;
 export TMPDIR=${an_dir}/work/scratch;
 
 . /usr/share/lmod/lmod/init/bash;
-##module load singularityce/4.1.0;
 module load nextflow/24.10.0;
 module load openjdk/17.0.11_9;
 "
@@ -107,9 +107,8 @@ eval $setup_env
 dir_name=$(basename $an_dir)
 
 if [ $rsync_only == false ]; then 
-    rsync_job_hold="-w post_done(MusVar_${dir_name})"
 
-    nf_cmd="sbatch -J \"MusVar_${dir_name}\" -p ${slurm_partition} -n 4 --time=6-00:00:00 -cwd ${an_dir} --mem 8G -o ${an_dir}/musvar.log -e ${an_dir}/musvar.err \
+    nf_cmd="sbatch -J \"MusVar_${dir_name}\" -p ${slurm_partition} -n 4 --time=6-00:00:00 --chdir=${an_dir} --mem 8G -o ${an_dir}/musvar.log -e ${an_dir}/musvar.err \
     --wrap=\"nextflow run $sarek_dir/main.nf \
         -profile $profile \
         -resume \
@@ -122,7 +121,7 @@ if [ $rsync_only == false ]; then
         --igenomes_ignore true \
         --email_on_fail $email \
         --tools freebayes,mutect2,strelka,manta \
-        --input ${an_dir}/input.csv \
+        --input ${an_dir}/sarek_input_somatic.csv \
         --outdir ${an_dir}/r_${run_number}\""
     
     # so we can rerun by hand if needed
@@ -142,8 +141,10 @@ if [ $rsync_only == false ]; then
     fi
 
     echo "MusVar pipeline submitted for analysis directory: $an_dir"
+    jobid=${jobstring##* }
+    rsync_job_hold="--dependency=afterok:$jobid"
 fi
-jobid=${jobstring##* }
+
 
 # if rsync is filled out, do finalize script
 if [ -z $rsync_dir ]; then
@@ -151,11 +152,9 @@ if [ -z $rsync_dir ]; then
     exit 0
 fi
 
-rsync_job_hold="--dependency=afterok:$jobid"
-
 job_to_run="sbatch -J \"finalize_${dir_name}\" $rsync_job_hold --mail-user=${email} --mail-type=END,FAIL \
 -n 1 --time=6-00:00:00 -p ${slurm_partition} --mem 2G --chdir=${an_dir} -o ${an_dir}/rsync.log -e ${an_dir}/rsync.err \
---wrap=\"/bin/bash ${script_dir}/rsync_summary_finalize.sh $an_dir ${an_dir}/r_${run_number} $rsync_dir\""
+--wrap=\"/bin/bash ${script_dir}/rsync_summary_finalize.sh $an_dir ${an_dir}/r_${run_number} $rsync_dir $pfg_simg $delivery_dir iris\"" 
 echo "$job_to_run \n\n"
 jobstring=$(eval $job_to_run) 
 if [ $? -ne 0 ]; then

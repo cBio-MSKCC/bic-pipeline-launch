@@ -11,6 +11,7 @@ from auto_config import *
 from Service import Clickup
 import glob
 from limsETL import LIMSRequestException
+from utils.ticket_utils import get_igo_ids
 
 def email_message(to, subject, msg): 
     """Send an email message."""
@@ -41,6 +42,11 @@ def get_pipeline_data(ticket_name):
         logging.debug(f"Ticket {ticket_name} matches pipeline {pipeline}, checking actions...")
         return REQUEST_PIPELINE_DATA[pipeline]
     
+
+def generate_project_files(ticket, pipeline):
+    
+    return
+
 def check_fastq(ticket, pipeline):
     fq_checked = Clickup.find_custom_field_index(ticket['custom_fields'], 'IGO Fastq Checked')
     if fq_checked is None:
@@ -54,16 +60,7 @@ def check_fastq(ticket, pipeline):
     logging.debug(f"Checking FASTQ files for ticket {ticket['id']}...")
     # This function should check if it can glean IGO id from the ticket description
     # and if so, check if the fastq files are found using LIMS and nfs4_getfacl
-    igo_ids_to_check = set()
-    for line in ticket['description'].splitlines():
-        if any(line.startswith(keyword) for keyword in CHECK_FASTQ_IGO):
-            logging.debug(f"Found IGO ID line in ticket {ticket['id']}: {line}")
-            igo_id_value = line.split(":", maxsplit=1)[-1].strip()
-            # regex to find igo ids in the line
-            igo_ids = re.findall(r'(\d{5}(?:_[a-zA-Z]+)?)', igo_id_value)
-            if igo_ids:
-                igo_ids_to_check.update(igo_ids)
-                logging.debug(f"IGO IDs found: {igo_ids}")
+    igo_ids_to_check = get_igo_ids(ticket)
 
     if not igo_ids_to_check:
         logging.debug(f"No IGO IDs found in ticket {ticket['id']}, skipping FASTQ check...")
@@ -154,9 +151,13 @@ def import_project(ticket, pipeline):
         Clickup.set_custom_field(ticket['id'], UUIDS['Block Auto Import'], 'true')
         return
 
+    cmd = f"{PROJECT_DATA[pipeline]['import_script']} {request_file[0]}"
+    # If the request is external (has external tag on ticket) add "--ignore_ad" to the command
+    if 'external' in [tag['name'] for tag in ticket['tags'] if 'tags' in ticket]:
+        cmd += " --ignore_ad"
+
     logging.info(f"Importing data for ticket {ticket['id']}...")
     # Run the import script
-    cmd = f"{PROJECT_DATA[pipeline]['import_script']} {request_file[0]}"
     if 'import_script_args' in PROJECT_DATA[pipeline]:
         cmd += f" {PROJECT_DATA[pipeline]['import_script_args']}"
     logging.debug(f"Running command: {cmd}")
@@ -169,7 +170,7 @@ def import_project(ticket, pipeline):
     #Clickup.add_comment(ticket['id'], f"Import script output:\n{out}")
 
     if return_code != 0:
-        msg = f"Import script failed for ticket {ticket['id']} with return code {return_code}.\n\nOutput:\n{out}"
+        msg = f"Import script failed for ticket {ticket['id']} with return code {return_code}.\n\nOutput:\n{out}\n\nCMD: {cmd}"
         logging.error(f"Import script failed for ticket {ticket['id']}. Return code: {return_code}")
         email_message(EMAIL, "Import Script Failed", msg)
         Clickup.set_custom_field(ticket['id'], UUIDS['Block Auto Import'], 'true')

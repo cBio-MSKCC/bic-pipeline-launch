@@ -1,0 +1,157 @@
+# MusVar
+
+(bic-sarek with musvar config)
+
+These scripts run the MusVar (mouse variants) analysis. MusVar is the bic-sarek pipeline with the MusVar config and some extra steps for delivery. Unlike [RNASeq](rnaseq.md), there is only one nextflow pipeline, so there is only one pipeline version.
+
+| Pipeline | Code | Installed on iris |
+|----------|------|-------------------|
+| bic-sarek (MusVar config) | [github.com/cBio-MSKCC/bic-sarek](https://github.com/cBio-MSKCC/bic-sarek) | `/usersoftware/core001/common/bic/internal/bic-sarek/dev` |
+
+The installed path is set at the top of `run_musvar_iris.sh` (`sarek_dir`). The pipeline is run with the config files `conf/bic/bic_musvar.config`, `conf/bic/iris.config` and a targets config from `conf/bic/targets/`, all from that directory. The variant callers are `freebayes,mutect2,strelka,manta`.
+
+## Where the scripts are
+
+All scripts below are in this directory (`musvar/`) unless noted.
+
+| Script | What it does |
+|--------|--------------|
+| `run_musvar_iris.sh` | Main launcher. Submits the bic-sarek job and the finalize job to slurm. Must be run on `islogin01.mskcc.org`. |
+| `make_input_somatic.py` | Creates `sarek_input_somatic.csv` from the sample mapping file and the metadata file. See [Generating sarek_input_somatic.csv](#generating-sarek_input_somaticcsv). |
+| `rsync_summary_finalize.sh` | Finalize job, submitted by `run_musvar_iris.sh`. See [What the finalize step does](#what-the-finalize-step-does). |
+| `close_pipeline_tickets.py` | Run by the finalize step. Sets `Archive Path` and `Pipeline Version` on the variants ticket and closes it, then sets `Delivery Path` and `Delivery URL` on the parent ticket. |
+| `email_delivery_template.sh` | Sends the delivery email. Needs `email_delivery_config.sh`, which you create by copying `email_delivery_config.sh.dist` and customizing it. |
+| `rsync_excludes.txt` | Files and directories excluded from both rsyncs (for example `work/`, `*.log` and `*.err`). |
+
+The automation that creates the analysis folder and starts these scripts is described on the [Automation](../automation/index.md) page.
+
+## Setup analysis folder
+
+The analysis folder is created either by the `auto_start` scripts or by hand. In both cases `run_musvar_iris.sh` expects the folder to contain the files below.
+
+### Files used by `run_musvar_iris.sh` and the finalize step
+
+| File | Required | Used for |
+|------|----------|----------|
+| `<project>_request.txt` | Yes | Passed to `run_musvar_iris.sh` as the first argument. Read for the genome build, assay and run number, and by the finalize step for delivery. |
+| `sarek_input_somatic.csv` | Yes | The sample sheet, passed as `--input` to bic-sarek. `run_musvar_iris.sh` prints an error and stops if it is missing. The finalize step copies it to `project_files` (any `*input*.csv` file). |
+| `<project>_sample_mapping.txt` | Yes | Input for `make_input_somatic.py`. Copied to `project_files` by the finalize step. |
+| `<project>_sample_metadata.txt` | Yes (to create the sample sheet) | Input for `make_input_somatic.py`. Says which samples are tumors and which are normals. |
+| `clickup_task_id.txt` | No | Written by `auto_start`. The finalize step reads it to find the ticket to update. If it is missing, the finalize step exits with an error at the end, after delivery, and no ticket is updated. |
+
+### Request file fields
+
+These fields are read from the request file by the scripts in this directory:
+
+| Field | Read by | Notes |
+|-------|---------|-------|
+| `Build` | `run_musvar_iris.sh`, finalize | `mm38` or `mm39`. Mapped to the `GRCm38_local` or `GRCm39_local` genome. The script does not check the build, so an unsupported build gives an empty `--genome`. For delivery, `mm38` is delivered as `mm10`. |
+| `Assay` | `run_musvar_iris.sh` | Must be `M-IMPACT`, `TWIST` or `M-IMPACT_v2_mm10`. `M-IMPACT` and `M-IMPACT_v2_mm10` use the `impact` targets config and `TWIST` uses the `twist` config. The script prints an error and stops if the field is missing, the value is not one of these, or the config file does not exist in `conf/bic/targets/`. |
+| `RunNumber` | `run_musvar_iris.sh`, finalize | Zero-padded to three digits. The output directory is `r_<run number>`. |
+| `PI`, `Investigator` | finalize | Used to build the delivery path. The finalize step exits without delivering if either is missing. |
+| `ProjectID` | finalize | Used in the delivery path, the delivery email and to remove the fastq files from the cache. |
+| `Investigator_Name` | finalize | Used in the delivery email. |
+| `DeliverTo_Email`, `PI_E-mail`, `Investigator_E-mail` | finalize | The delivery email goes to the unique addresses from these fields. |
+
+An example with the fields above:
+
+```
+ProjectID: Proj_100000
+PI: soccin
+Investigator: soccin
+RunNumber: 12
+Build: mm39
+Assay: M-IMPACT
+```
+
+### Generating sarek_input_somatic.csv
+
+`sarek_input_somatic.csv` is not written by hand. It is generated by `make_input_somatic.py`. The columns are `patient,sample,status,lane,fastq_1,fastq_2`, and the column descriptions are here: https://nf-co.re/sarek/3.5.1/docs/usage/#input-sample-sheet-configurations
+
+```
+python make_input_somatic.py <project>_sample_mapping.txt
+```
+
+`auto_start` runs this for you once the fastq files have been synced. The script writes `sarek_input_somatic.csv` to the same directory as the mapping file. It must exist before `run_musvar_iris.sh` is run.
+
+What the script does:
+- **Mapping file.** It reads the sample name (column 2) and the fastq directory (column 4) from the headerless tab-separated mapping file. A leading `s_` is removed from the sample name. For `Mouse-Pooled-Normal` samples, a trailing `-<number>` is also removed.
+- **Fastq files.** It finds the `_R1_<number>.fastq.gz` and `_R2_<number>.fastq.gz` files under each directory, and exits with a fatal error if the R1 and R2 files do not match up.
+- **Lane.** It builds the `lane` value (`<sample>:<flowcell>_<lane>`) from the first read header in each R1 fastq file.
+- **Metadata file.** It reads the metadata file from the same directory. The name is the mapping file name with `mapping` replaced by `metadata`: `<project>_sample_metadata.txt`. It is comma-separated with a header row and these columns:
+    - `SampleName`: the sample name. A leading `s_` is removed.
+    - `SampleType`: `Normal` or `Tumor` (case-sensitive). `Tumor` gets `status` 1, anything else gets `status` 0.
+    - `Paired`: used for tumors only. The `SampleName` of the matching normal, without the `s_` prefix.
+- **Patient IDs.** The `patient` IDs (`P_1`, `P_2`, ...) are assigned automatically in order of first appearance. Each normal and the tumors paired to it share an ID.
+
+Things to watch for:
+- If the metadata file is missing, the script writes a template named `_sample_manifest.csv` in the current directory and does not create `sarek_input_somatic.csv`. It still exits with a success status, so `auto_start` carries on and queues the run. `run_musvar_iris.sh` then fails because `sarek_input_somatic.csv` is not found.
+- A sample that is in the mapping file but not in the metadata file gets an empty `patient` and `status`.
+- Where the metadata file comes from: [I_DON'T_KNOW]
+
+## Running
+
+On `islogin01.mskcc.org` only:
+
+```
+run_musvar_iris.sh <request file> <analysis directory> <email> <rsync_dir> [rsync_only]
+```
+
+Where:
+- `request file` is the full path to the request file.
+- `analysis directory` is the full path to the analysis folder (see [Setup analysis folder](#setup-analysis-folder)).
+- `email` is your MSK email. It is used for the nextflow failure email (`--email_on_fail`) and for the finalize job's slurm mail.
+- `rsync_dir` is the directory the analysis folder is rsynced to for local archiving, not for delivery. Pass `""` to skip the rsync and finalize step. `auto_start` uses `/data1/core001/work/bic/bot01/rsync/musvar`.
+- `rsync_only` skips the bic-sarek job and runs only the finalize job. It is the only option. Any other arguments after it are currently ignored.
+
+What the script submits to slurm (partition `cmobic_cpu`):
+
+1. `MusVar_<directory name>`: runs bic-sarek with `-profile singularity`, `-resume`, `--input <analysis directory>/sarek_input_somatic.csv` and `--outdir <analysis directory>/r_<run number>`. Logs are `musvar.log` and `musvar.err` in the analysis directory.
+2. `finalize_<directory name>`: runs `rsync_summary_finalize.sh` after the job above succeeds. It emails `email` on end or failure. Logs are `rsync.log` and `rsync.err`.
+
+The nextflow work directory is `<analysis directory>/work`.
+
+The script also writes `musvar_cmd.txt` to the analysis directory. It has the environment setup and the command that was submitted. You can rerun the command with `mv musvar_cmd.txt musvar_cmd.sh && chmod +x musvar_cmd.sh` and then run it as a bash script. See [Rerunning](#rerunning).
+
+The pipeline emails you through nextflow if it fails. If it succeeds and you gave an rsync directory, you get an email from the server when the finalize job ends, whether or not it succeeded. If the script was started by `auto_start`, the output is in `start_pipeline.log` in the analysis folder.
+
+### What the finalize step does
+
+`rsync_summary_finalize.sh` does these things in order:
+
+1. Copies the mapping file, request file and `*input*.csv` file to `<outdir>/project_files`.
+2. Rsyncs the analysis folder to `rsync_dir`.
+3. Rsyncs the output directory to the delivery directory `/data1/core002/res/bic/results/<PI>/<Investigator>/<ProjectID>/`.
+4. Adds the project permissions command to the delivery queue (`/data1/core001/work/bic/bot01/queues/isvzeta_queue.txt`).
+5. Removes the fastq files for the project from `/data1/core001/CACHE/igo`.
+6. Sends the delivery email.
+7. Reads the pipeline version from `pipeline_info/nf_core_*_versions.yml` (the first line that contains `bic-sarek`), and runs `close_pipeline_tickets.py` to update and close the ClickUp ticket. This is skipped, and the script exits with an error, if `clickup_task_id.txt` is missing or no pipeline version is found.
+
+MusVar does not run a delivery summary or post-pipeline checks, which RNASeq does.
+
+## Rerunning
+
+| Situation | What to do |
+|-----------|------------|
+| The pipeline died | Run `run_musvar_iris.sh` again without options. The nextflow command includes `-resume`, but the previous version of this README said that it does nothing because the intermediate files are usually deleted at the end of a run. Whether that is still true: [I_DON'T_KNOW] |
+| Rerun from variant calling (skip alignment) | See [Rerunning from variant calling](#rerunning-from-variant-calling). |
+| The finalize or rsync step failed | Run with `rsync_only`. |
+| `sarek_input_somatic.csv` is missing | Create the metadata file, run `make_input_somatic.py` again (see [Generating sarek_input_somatic.csv](#generating-sarek_input_somaticcsv)), and run `run_musvar_iris.sh`. |
+| The automation stopped with an email | Fix the problem named in the email, then uncheck `Email Alerted` on the ticket. The next `find_and_start.sh` run will pick the ticket up again. |
+| The run path or archive path already exists | Remove the directory named in the email, then uncheck `Email Alerted`. |
+| Restart the automation for a finished or running project | Delete the project folders in the work dir and the rsync dir. Clear the fields that were filled in when the run started (`Run Path` and `Archive Path`) on the ticket, which is optional. Set the variants ticket back to `to do`. Uncheck `Email Alerted` if it is checked. |
+
+### Rerunning from variant calling
+
+I have been able to run the pipeline from the variant calling step, which skips the initial alignment.
+
+1. Open `musvar_cmd.txt` in the analysis directory. It has the nextflow command that `run_musvar_iris.sh` ran.
+2. Add `--step 'variant_calling'` to the end of the nextflow command.
+3. Change `--input <analysis directory>/sarek_input_somatic.csv` to `--input <analysis directory>/<outdir>/csv/recalibrated.csv`. `<outdir>` is `r_<run number>`.
+4. Run the file (see above).
+
+This only reruns the analysis step. It does not run the finalize step. To continue the automation after the rerun succeeds, run `run_musvar_iris.sh` with `rsync_only`.
+
+Things that I don't know how to do:
+- Rerunning with different pipeline parameters or a different pipeline version: [I_DON'T_KNOW]
+- Re-sending the delivery email on its own: [I_DON'T_KNOW]

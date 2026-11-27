@@ -19,11 +19,11 @@ multiqc_main_dir = "metrics/multiqc/star_htseq"
 multiqc_data_dir = multiqc_main_dir + "/multiqc_report_data/"
 multiqc_plot_dir = multiqc_main_dir + "/multiqc_report_plots/png/"
 bicdelivery_summary_dir = "pipeline_info/bicdelivery_summary"
-de_dir =  "tables/differential/"
-gsea_path = "report/gsea/"
-de_project_qc_plot_dir1 = "plots/exploratory/"
+de_dir =  "tables/differential/contrasts/"
+gsea_path = "report/gsea/contrasts/"
+de_project_qc_plot_dir1 = "plots/exploratory/contrasts/"
 de_project_qc_plot_dir2 = "png/"
-de_comparison_qc_plots = "plots/differential/"
+de_comparison_qc_plots = "plots/differential/contrasts/"
 #GLOBS
 contrast_glob = proj_file_dir + "/*contrasts*.csv"
 input_glob = proj_file_dir + "/*input.csv"
@@ -90,10 +90,11 @@ def gather_samples_and_contrasts(input_file, contrast_files):
 # gsea, and qc plots
 def gather_contrast_data(output_dir, contrasts):
     for contrast in contrasts:
+        contrast_file_prefix = os.path.basename(contrasts[contrast]["contrast_file"]).split(".")[0]
         # DE data
         # Open filtered .tsv file, grab # genes up and down 
         # and add to contrasts
-        de_res = pd.read_csv(os.path.join(output_dir, de_path_from_rnaseq, de_dir, contrast + ".deseq2.de_results_filtered.tsv"), sep="\t")
+        de_res = pd.read_csv(os.path.join(output_dir, de_path_from_rnaseq, de_dir, contrast + "_" + contrast_file_prefix + ".deseq2.de_results_filtered.tsv"), sep="\t")
         contrasts[contrast]["DE_up"] = de_res[de_res[de_fold_change_header] >= 0].shape[0]
         contrasts[contrast]["DE_down"] = de_res[de_res[de_fold_change_header] < 0].shape[0]
 
@@ -101,15 +102,16 @@ def gather_contrast_data(output_dir, contrasts):
         if os.path.exists(os.path.join(output_dir, de_path_from_rnaseq, gsea_path)):
             contrasts[contrast]['GSEA'] = {}
 
-            gsea_datasets = os.listdir(os.path.join(output_dir, de_path_from_rnaseq, gsea_path, contrast))
+            gsea_ds_path = os.path.join(output_dir, de_path_from_rnaseq, gsea_path, contrast + "_" + contrast_file_prefix)
+            gsea_datasets = os.listdir(gsea_ds_path)
 
             for dataset in gsea_datasets:
                 contrasts[contrast]['GSEA'][dataset] = {}
-                target_filename = os.path.join(output_dir, de_path_from_rnaseq, gsea_path, contrast, dataset, ".".join([contrast, dataset, "gsea_report_for_" + contrasts[contrast]['target'], "tsv"]))
-                reference_filename = os.path.join(output_dir, de_path_from_rnaseq, gsea_path, contrast, dataset, ".".join([contrast, dataset, "gsea_report_for_" + contrasts[contrast]['reference'], "tsv"]))
+                target_filename = os.path.join(gsea_ds_path, dataset, ".".join([contrast + "_" + contrast_file_prefix, dataset, "gsea_report_for_" + contrasts[contrast]['target'], "tsv"]))
+                reference_filename = os.path.join(gsea_ds_path, dataset, ".".join([contrast + "_" + contrast_file_prefix, dataset, "gsea_report_for_" + contrasts[contrast]['reference'], "tsv"]))
                 if not os.path.exists(target_filename):
-                    target_filename = os.path.join(output_dir, de_path_from_rnaseq, gsea_path, contrast, dataset, ".".join([contrast, dataset, "gsea_report_for_na_pos","tsv"]))
-                    reference_filename = os.path.join(output_dir, de_path_from_rnaseq, gsea_path, contrast, dataset, ".".join([contrast, dataset, "gsea_report_for_na_neg","tsv"]))
+                    target_filename = os.path.join(gsea_ds_path, dataset, ".".join([contrast + "_" + contrast_file_prefix, dataset, "gsea_report_for_na_pos","tsv"]))
+                    reference_filename = os.path.join(gsea_ds_path, dataset, ".".join([contrast + "_" + contrast_file_prefix, dataset, "gsea_report_for_na_neg","tsv"]))
                     if not os.path.exists(target_filename):
                         print("Target GSEA file not found: " + target_filename)
                         sys.exit(1)
@@ -120,7 +122,7 @@ def gather_contrast_data(output_dir, contrasts):
                 contrasts[contrast]['GSEA'][dataset]['index'] = os.path.join(de_path_from_rnaseq, gsea_path, contrast, dataset, ".".join([contrast, dataset,"index", "html"]))
 
         # DE comparison qc plots
-        contrasts[contrast]["plots"] = glob.glob( os.path.join(output_dir, de_path_from_rnaseq, de_comparison_qc_plots, contrast,"png","*.png"))
+        contrasts[contrast]["plots"] = glob.glob( os.path.join(output_dir, de_path_from_rnaseq, de_comparison_qc_plots, contrast + "_" + contrast_file_prefix,"png","*.png"))
         # iterate plots paths and remove output dir
         contrasts[contrast]["plots"] = [ plot.replace(output_dir + "/", "") for plot in contrasts[contrast]["plots"] ]
 
@@ -194,7 +196,8 @@ def parse_contrasts(contrast_file, contrasts):
             cols = line.strip().split(",")
             contrasts[cols[contrast_id_idx]] = {"reference": cols[contrast_ref_idx], 
                                                 "target": cols[contrast_target_idx], 
-                                                "variable": cols[contrast_var_idx]}
+                                                "variable": cols[contrast_var_idx],
+                                                "contrast_file": contrast_file}
     return contrasts
             
 def pull_sample_groups(input_file, variables, samp_dict):

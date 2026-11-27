@@ -15,12 +15,16 @@ bic_rnaseq="/usersoftware/core001/common/bic/internal/bic-rnaseq/dev"
 bic_diff="/usersoftware/core001/common/bic/internal/bic-differentialabundance/dev"
 profile="singularity"
 DE_only=false
+qos=""
+transcript=false
 rsync_only=false
-slurm_partition="cmobic_cpu,cmobic_pipeline"
+slurm_partition="cmobic_cpu"
 pandas_simg="/data1/core001/rsrc/genomic/bic/singularity/pandas/pandas.simg"
 pfg_simg="/usersoftware/core001/common/bic/internal/project_file_generation/pfg.simg"
-delivery_dir="kristakaz@terra:/ifs/rtsia01/bic/results"
-#delivery_dir="/data1/core002/res/bic/results"
+#delivery_dir="/ifs/rtsia01/bic/results"
+additional_fasta=""
+delivery_dir="/data1/core002/res/bic/results"
+
 # usage:
 # run_rnaseq.sh <request file> <analysis directory> <email> <rsync_dir> [DE_only] [extra args]
 if [ $# -lt 3 ]; then
@@ -54,6 +58,22 @@ if [ "$1" == "rsync_only" ]; then
     shift 1
 fi
 
+if [ "$1" == "transcript" ]; then
+    transcript=true
+    shift 1
+fi
+
+if [ "$1" == "priority" ]; then
+    qos="--qos=priority"
+    shift 1
+fi
+
+# if the $1 ends in ".fa" add additional fasta arg for rnaseq.
+if [ "${1##*.}" == "fa" ]; then
+    additional_fasta="--additional_fasta $1"
+    shift 1
+fi
+
 extra_args=$@
 
 # genome map contains all the local genomes that are available as of now
@@ -64,6 +84,7 @@ genome_map["hg19"]="hg19_local"
 genome_map["hg38"]="hg38_local"
 genome_map["mm10"]="mm10_local"
 genome_map["mm39"]="mm39_local"
+genome_map["hg38_mm39"]="hg38_mm39_local"
 
 run_number=$(grep ^RunNumber $req_file | cut -f2 -d":" | tr -d " " | xargs printf "%03d" )
 
@@ -80,9 +101,13 @@ if [[ -z ${genome_map[$build]} ]]; then
     exit 1
 fi
 
+params_file=$bic_rnaseq/params/params.bic.yml
+if [ $transcript == true ]; then
+    params_file=$bic_rnaseq/params/params.bic.transcript.yml
+fi
 genome=${genome_map[$build]}
 
-export MODULEPATH=/etc/modulefiles:/usr/share/modulefiles:/admin/software/lmod/modulefiles:/admin/software/spack/spack_modulefiles/Core
+export MODULEPATH=/etc/modulefiles:/usr/share/modulefiles:/admin/software/lmod/modulefiles:/admin/software/spack/spack_modulefiles/Core:/usersoftware/core001/common/bic/modulefiles
 export MODULEPATH_ROOT=/usr/share/modulefiles
 export MODULESHOME=/usr/share/lmod/lmod
 mkdir -p ${an_dir}/work/scratch
@@ -91,7 +116,7 @@ export NXF_SINGULARITY_CACHEDIR=/usersoftware/core001/common/bic/internal/.singu
 
 . /usr/share/lmod/lmod/init/bash
 ##module load singularityce/4.1.0
-module load nextflow/24.10.0  
+module load nextflow/26.04.3  
 module load openjdk/17.0.11_9
 
 dir_name=$(basename $an_dir)
@@ -102,16 +127,17 @@ rsync_job_hold=""
 if [ $DE_only == false ] && [ $rsync_only == false ]; then
     ## RNASEQ
 
-job_to_run="sbatch -J \"rnaseq_${dir_name}\" -p ${slurm_partition} -n 4 --time=6-00:00:00 --mem 8G --chdir=${an_dir} -o ${an_dir}/rnaseq.log -e ${an_dir}/rnaseq.err \
+job_to_run="sbatch -J \"rnaseq_${dir_name}\" -p ${slurm_partition} ${qos} -n 4 --time=6-00:00:00 --mem 8G --chdir=${an_dir} -o ${an_dir}/rnaseq.log -e ${an_dir}/rnaseq.err \
 --wrap=\"nextflow run $bic_rnaseq \
 -resume \
 -profile $profile \
 -ansi-log false \
 -c $bic_rnaseq/conf/bic.config \
 -c $bic_rnaseq/conf/iris.config \
--params-file $bic_rnaseq/params/params.bic.yml \
+-params-file $params_file \
 -w ${an_dir}/work \
 --genome ${genome} \
+${additional_fasta} \
 --input ${an_dir}/input.csv \
 --outdir ${an_dir}/r_${run_number}\""
 
@@ -151,7 +177,7 @@ if [ $rsync_only == false ]; then
         
         cword=$(basename $cfile .csv)
 
-        job_to_run="sbatch -J \"diff_${dir_name}_${cword}\" -p ${slurm_partition} -n 4 --time=6-00:00:00 --mem 8G --chdir=${an_dir} $de_job_hold -o ${an_dir}/diff.log -e ${an_dir}/diff.err \
+        job_to_run="sbatch -J \"diff_${dir_name}_${cword}\" -p ${slurm_partition} ${qos} -n 4 --time=6-00:00:00 --mem 8G --chdir=${an_dir} $de_job_hold -o ${an_dir}/diff.log -e ${an_dir}/diff.err \
         --wrap=\"nextflow run $bic_diff \
         -profile $profile \
         -resume \
@@ -192,7 +218,7 @@ fi
 
 sleep 1
 
-job_to_run="sbatch -J \"finalize_${dir_name}\" $rsync_job_hold --mail-user=${email} --mail-type=END,FAIL \
+job_to_run="sbatch -J \"finalize_${dir_name}\" $rsync_job_hold --mail-user=${email} --mail-type=END,FAIL ${qos} \
 -n 1 --time=6-00:00:00 -p ${slurm_partition} --mem 2G --chdir=${an_dir} -o ${an_dir}/rsync.log -e ${an_dir}/rsync.err \
 --mail-user ${email} \
 --wrap=\"/bin/bash ${script_dir}/rsync_summary_finalize.sh $an_dir ${an_dir}/r_${run_number} $rsync_dir $pandas_simg $pfg_simg $delivery_dir iris\""

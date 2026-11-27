@@ -14,7 +14,7 @@ fi
 # constants
 bic_adiago="/usersoftware/core001/common/bic/internal/adiago/dev"
 profile="singularity"
-slurm_partition="cmobic_cpu,cmobic_pipeline"
+slurm_partition="cmobic_cpu"
 delivery_dir="kristakaz@terra:/ifs/rtsia01/bic/results"
 #delivery_dir="/data1/core002/res/bic/results"
 # usage:
